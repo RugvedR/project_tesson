@@ -23,6 +23,7 @@ import logging
 import re
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from rapidfuzz import fuzz, process
 
@@ -218,9 +219,14 @@ class EntityResolutionLedger:
             self._store[canonical_id] = {
                 "entity_type": data["entity_type"],
                 "aliases": list(data["aliases"]),
+                "status": "canonical",
+                "seen_in_prs": [],
             }
+            # The canonical ID itself is an implicit alias
+            self._alias_map[self._normalize(canonical_id)] = canonical_id
             for alias in data["aliases"]:
                 self._alias_map[self._normalize(alias)] = canonical_id
+        self._persist()
 
         # Load persisted ledger on top of seed (user data overrides)
         if self.ledger_path and Path(self.ledger_path).exists():
@@ -246,7 +252,7 @@ class EntityResolutionLedger:
 
     # ── Core Resolution ──────────────────────────────────────────────────────
 
-    def resolve_entity(self, raw_string: str, entity_type: str | None = None) -> str:
+    def resolve_entity(self, raw_string: str, entity_type: str | None = None, pr_number: int | None = None) -> str:
         """Resolve a raw entity string to its canonical Matrix Row ID.
 
         Algorithm:
@@ -254,11 +260,12 @@ class EntityResolutionLedger:
           2. Check exact alias map (O(1), free).
           3. Run RapidFuzz WRatio against all known aliases.
           4a. Score >= SIMILARITY_THRESHOLD → return canonical ID.
-          4b. Score <  SIMILARITY_THRESHOLD → register new entity, return new ID.
+          4b. Score <  SIMILARITY_THRESHOLD → register new provisional entity, return new ID.
 
         Args:
             raw_string: The raw entity name from the LLM (e.g., "redis-cart").
             entity_type: Optional hint for entity type when registering new nodes.
+            pr_number: Optional PR number where this entity was seen (for auto-promotion).
 
         Returns:
             The canonical Matrix Row ID (always a valid Tesson ID format).
@@ -269,6 +276,7 @@ class EntityResolutionLedger:
         if normalized in self._alias_map:
             canonical = self._alias_map[normalized]
             logger.debug("TERL exact match: '%s' → '%s'", raw_string, canonical)
+            self._record_sighting(canonical, pr_number)
             return canonical
 
         # ── Step 2: Fuzzy match via RapidFuzz ───────────────────────────────
@@ -289,6 +297,7 @@ class EntityResolutionLedger:
                 )
                 # Register this alias so future exact matches are instant
                 self._register_alias(canonical, normalized)
+                self._record_sighting(canonical, pr_number)
                 return canonical
 
         # ── Step 3: New entity — register and return ─────────────────────────
@@ -299,7 +308,7 @@ class EntityResolutionLedger:
             "Registering as new entity '%s' (type=%s).",
             raw_string, normalized, new_id, inferred_type,
         )
-        self._register_new_entity(new_id, normalized, inferred_type)
+        self._register_new_entity(new_id, normalized, inferred_type, pr_number)
         return new_id
 
     def register_entity(self, canonical_id: str, aliases: list[str], entity_type: str) -> None:
@@ -315,7 +324,10 @@ class EntityResolutionLedger:
         self._store[canonical_id] = {
             "entity_type": entity_type,
             "aliases": aliases,
+            "status": "canonical",
+            "seen_in_prs": [],
         }
+        self._alias_map[self._normalize(canonical_id)] = canonical_id
         for alias in aliases:
             self._alias_map[self._normalize(alias)] = canonical_id
         self._persist()
@@ -331,15 +343,46 @@ class EntityResolutionLedger:
         self._persist()
 
     def get_all_canonical_ids(self) -> list[str]:
-        """Return all known canonical Matrix Row IDs."""
-        return list(self._store.keys())
+        """Return all known canonical Matrix Row IDs (excluding provisional)."""
+        return [k for k, v in self._store.items() if v.get("status") == "canonical"]
 
     def get_entity_type(self, canonical_id: str) -> str | None:
         """Return the entity type for a canonical ID, or None if not found."""
         entry = self._store.get(canonical_id)
         return entry["entity_type"] if entry else None
 
+    def get_status(self, canonical_id: str) -> str:
+        """Return the status ('canonical' or 'provisional') for an ID."""
+        entry = self._store.get(canonical_id)
+        return entry.get("status", "provisional") if entry else "provisional"
+
     # ── Internal Helpers ─────────────────────────────────────────────────────
+
+    def _record_sighting(self, canonical_id: str, pr_number: Optional[int]) -> None:
+        """Record that an entity was seen in a specific PR, auto-promoting if threshold reached."""
+        if not pr_number:
+            return
+            
+        entry = self._store[canonical_id]
+        
+        # Optimization: Prevent unbounded array growth. Once canonical, we don't need to track PRs.
+        if entry.get("status") == "canonical":
+            return
+            
+        seen = entry.get("seen_in_prs", [])
+        
+        if pr_number not in seen:
+            seen.append(pr_number)
+            entry["seen_in_prs"] = seen
+            
+            # Rule of 3: Auto-promote to canonical
+            if len(set(seen)) >= 3:
+                entry["status"] = "canonical"
+                # Clear the array to save space now that it's promoted
+                entry["seen_in_prs"] = []
+                logger.info("TERL: Auto-promoted '%s' to canonical status (seen in 3 PRs).", canonical_id)
+            
+            self._persist()
 
     def _generate_new_id(self, normalized_name: str) -> str:
         """Generate a new canonical ID from the normalized name.
@@ -355,20 +398,22 @@ class EntityResolutionLedger:
         # Fallback to UUID
         return f"entity_{uuid.uuid4().hex[:8]}"
 
-    def _register_new_entity(self, canonical_id: str, normalized_alias: str, entity_type: str) -> None:
+    def _register_new_entity(self, canonical_id: str, normalized_alias: str, entity_type: str, pr_number: int | None) -> None:
         self._store[canonical_id] = {
             "entity_type": entity_type,
             "aliases": [normalized_alias],
+            "status": "provisional",
+            "seen_in_prs": [pr_number] if pr_number else [],
         }
         self._alias_map[normalized_alias] = canonical_id
         self._persist()
 
     def _register_alias(self, canonical_id: str, normalized_alias: str) -> None:
-        """Add a new alias to an existing entity without full persistence (fast path)."""
+        """Add a new alias to an existing entity and save to disk."""
         if normalized_alias not in self._store[canonical_id]["aliases"]:
             self._store[canonical_id]["aliases"].append(normalized_alias)
         self._alias_map[normalized_alias] = canonical_id
-        # Note: we debounce persistence here; full persist happens on new entity creation
+        self._persist()
 
     def _persist(self) -> None:
         """Write the current TERL state to disk (if a path is configured)."""
@@ -385,8 +430,14 @@ class EntityResolutionLedger:
         with path.open("r", encoding="utf-8") as f:
             persisted: dict = json.load(f)
         for canonical_id, data in persisted.items():
-            # Persisted data takes priority over seed
+            # Ensure backwards compatibility
+            if "status" not in data:
+                data["status"] = "canonical"
+            if "seen_in_prs" not in data:
+                data["seen_in_prs"] = []
+                
             self._store[canonical_id] = data
+            self._alias_map[self._normalize(canonical_id)] = canonical_id
             for alias in data.get("aliases", []):
                 self._alias_map[self._normalize(alias)] = canonical_id
         logger.info("TERL: Loaded %d entities from %s.", len(persisted), path)

@@ -157,6 +157,29 @@ class TestNewEntityRegistration:
         with pytest.raises(ValueError, match="already exists"):
             terl.register_entity("redis_cache", ["new-alias"], "cache")
 
+    def test_new_entity_starts_as_provisional(self, terl):
+        id1 = terl.resolve_entity("provisional-service", pr_number=101)
+        assert terl._store[id1]["status"] == "provisional"
+        assert terl._store[id1]["seen_in_prs"] == [101]
+
+    def test_auto_promotion_rule_of_3(self, terl):
+        id1 = terl.resolve_entity("future-canonical", pr_number=101)
+        assert terl._store[id1]["status"] == "provisional"
+        
+        # Second PR
+        terl.resolve_entity("future-canonical", pr_number=102)
+        assert terl._store[id1]["status"] == "provisional"
+        assert len(terl._store[id1]["seen_in_prs"]) == 2
+        
+        # Same PR again (should not increment)
+        terl.resolve_entity("future-canonical", pr_number=102)
+        assert len(terl._store[id1]["seen_in_prs"]) == 2
+        
+        # Third distinct PR -> Auto-promotes!
+        terl.resolve_entity("future-canonical", pr_number=103)
+        assert terl._store[id1]["status"] == "canonical"
+        assert len(terl._store[id1]["seen_in_prs"]) == 3
+
 
 # ─── Persistence Round-Trip ──────────────────────────────────────────────────
 

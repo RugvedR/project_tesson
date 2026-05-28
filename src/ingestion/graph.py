@@ -30,6 +30,7 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import ValidationError
 from typing_extensions import TypedDict
 
+from ingestion.audit import AuditLogger
 from ingestion.hydrator import hydrate_pr_diff
 from ingestion.prompt import SYSTEM_PROMPT, build_user_prompt
 from ingestion.schemas import TessonSimplex, TessonSimplexExtraction
@@ -249,7 +250,7 @@ def resolve_terl_node(state: PipelineState, terl: EntityResolutionLedger) -> Pip
 
     try:
         raw_nodes: list[str] = raw_output.get("nodes", [])
-        resolved_nodes = [terl.resolve_entity(node_id) for node_id in raw_nodes]
+        resolved_nodes = [terl.resolve_entity(node_id, pr_number=pr_number) for node_id in raw_nodes]
 
         # Rebuild simplex with resolved nodes
         simplex_data = {**raw_output, "nodes": resolved_nodes}
@@ -296,6 +297,23 @@ def write_ledger_node(state: PipelineState) -> PipelineState:
         return {**state, "pipeline_error": f"Ledger write failed: {e}"}
 
 
+# ─── Node: Audit ─────────────────────────────────────────────────────────────
+
+def audit_node(state: PipelineState, audit_logger: AuditLogger) -> PipelineState:
+    """Dump the full pipeline trace for traceability."""
+    audit_logger.write_log(
+        repo=state.get("repo", "unknown"),
+        pr_number=state.get("pr_number", 0),
+        diff_text=state.get("diff_text"),
+        commit_sha=state.get("commit_sha"),
+        merged_at_timestamp=state.get("merged_at_timestamp"),
+        llm_raw_output=state.get("llm_raw_output"),
+        resolved_simplex=state.get("resolved_simplex"),
+        pipeline_error=state.get("pipeline_error"),
+    )
+    return state
+
+
 # ─── Routing Logic ────────────────────────────────────────────────────────────
 
 def should_retry_or_resolve(state: PipelineState) -> str:
@@ -314,6 +332,7 @@ def should_retry_or_resolve(state: PipelineState) -> str:
 def build_pipeline(
     terl: Optional[EntityResolutionLedger] = None,
     llm=None,
+    audit_logger: Optional[AuditLogger] = None,
 ) -> CompiledStateGraph:
     """Build and compile the LangGraph pipeline.
 
@@ -331,9 +350,13 @@ def build_pipeline(
     if llm is None:
         llm = _build_llm()
 
-    # Bind terl and llm into node closures
+    if audit_logger is None:
+        audit_logger = AuditLogger()
+
+    # Bind terl, llm, and audit into node closures
     def _extract(state): return extract_llm_node(state, terl=terl, llm=llm)
     def _resolve(state): return resolve_terl_node(state, terl=terl)
+    def _audit(state): return audit_node(state, audit_logger=audit_logger)
 
     graph = StateGraph(PipelineState)
 
@@ -343,6 +366,7 @@ def build_pipeline(
     graph.add_node("extract_llm", _extract)
     graph.add_node("resolve_terl", _resolve)
     graph.add_node("write_ledger", write_ledger_node)
+    graph.add_node("audit", _audit)
 
     # Linear edges
     graph.add_edge(START, "ingest")
@@ -356,12 +380,13 @@ def build_pipeline(
         {
             "retry": "extract_llm",    # Loop back for self-correction
             "resolve": "resolve_terl",
-            "end": END,
+            "end": "audit",
         },
     )
 
     graph.add_edge("resolve_terl", "write_ledger")
-    graph.add_edge("write_ledger", END)
+    graph.add_edge("write_ledger", "audit")
+    graph.add_edge("audit", END)
 
     return graph.compile()
 
