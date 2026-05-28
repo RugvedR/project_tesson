@@ -15,7 +15,6 @@ from pydantic import ValidationError
 
 from ingestion.schemas import EntityType, TessonNode, TessonSimplex
 
-
 # ─── TessonNode Tests ────────────────────────────────────────────────────────
 
 class TestTessonNodeValid:

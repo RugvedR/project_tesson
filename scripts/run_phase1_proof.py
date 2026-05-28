@@ -73,6 +73,7 @@ def _fetch_prs(repo_name: str, count: int) -> list[dict]:
                 "number": pr.number,
                 "title": pr.title,
                 "merged_at": str(pr.merged_at),
+                "commit_sha": pr.merge_commit_sha,
             })
             if len(prs) >= count:
                 break
@@ -156,9 +157,12 @@ def _run_proof():
                 failed += 1
                 errors.append({"pr": pr_number, "error": "No simplex produced"})
             else:
-                # ── Metric 1: Validate the simplex ─────────────────────────
+                # ── Metric 1 & 3: Validate the simplex & metadata ──────
                 try:
                     TessonSimplex.model_validate(simplex.model_dump())
+                    if simplex.commit_sha != pr_info["commit_sha"]:
+                        raise ValueError(f"commit_sha mismatch: expected {pr_info['commit_sha']}, got {simplex.commit_sha}")
+                    
                     print(f"PASS ✓ ({elapsed:.1f}s) — simplex: {simplex.simplex_id[:8]}...")
                     passed += 1
                     results.append(simplex)
@@ -185,6 +189,12 @@ def _run_proof():
     unique_redis_ids = set(redis_ids.values())
     terl_collapse_passed = len(unique_redis_ids) == 1
 
+    # ── Metric 3: Deterministic Metadata Integrity ──────────────────────────
+    print("\n[5/5] Checking Deterministic Metadata Integrity (Metric 3)...")
+    all_simplex_ids = [res.simplex_id for res in results]
+    unique_simplex_ids = set(all_simplex_ids)
+    metadata_integrity_passed = len(all_simplex_ids) == len(unique_simplex_ids)
+
     print("\n" + "─" * 60)
     print("  RESULTS")
     print("─" * 60)
@@ -205,6 +215,11 @@ def _run_proof():
     print(f"    Unique IDs    : {len(unique_redis_ids)}")
     print(f"    Status        : {'✓ PASS (all collapsed to 1 ID)' if terl_collapse_passed else '✗ FAIL (multiple IDs found)'}")
 
+    print(f"\n  Metric 3 — Deterministic Metadata:")
+    print(f"    Total UUIDs   : {len(all_simplex_ids)}")
+    print(f"    Unique UUIDs  : {len(unique_simplex_ids)}")
+    print(f"    Status        : {'✓ PASS (all UUIDs unique & SHAs matched)' if metadata_integrity_passed else '✗ FAIL (duplicate UUIDs found)'}")
+
     if errors:
         print(f"\n  Failures detail:")
         for e in errors[:10]:  # show first 10
@@ -213,8 +228,9 @@ def _run_proof():
     print("\n" + "═" * 60)
     m1_pass = pass_rate == 100.0
     m2_pass = terl_collapse_passed
+    m3_pass = metadata_integrity_passed
 
-    if m1_pass and m2_pass:
+    if m1_pass and m2_pass and m3_pass:
         print("  🟢  PHASE 1 MILESTONE 1: PASSED")
         print("  Bedrock is ready for the sparse matrix math engine.")
     else:
@@ -223,9 +239,11 @@ def _run_proof():
             print(f"     ✗ Metric 1 failed ({pass_rate:.1f}% < 100%)")
         if not m2_pass:
             print(f"     ✗ Metric 2 failed ({len(unique_redis_ids)} unique IDs, expected 1)")
+        if not m3_pass:
+            print(f"     ✗ Metric 3 failed (duplicate UUIDs or SHA mismatch)")
     print("═" * 60 + "\n")
 
-    return 0 if (m1_pass and m2_pass) else 1
+    return 0 if (m1_pass and m2_pass and m3_pass) else 1
 
 
 if __name__ == "__main__":

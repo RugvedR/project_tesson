@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
 
 from dotenv import load_dotenv
 from github import Auth, Github, GithubException
@@ -40,12 +39,13 @@ MAX_CHARS = MAX_TOKENS * CHARS_PER_TOKEN  # 200,000 characters
 def hydrate_pr_diff(
     repo_full_name: str,
     pr_number: int,
-    github_token: Optional[str] = None,
-) -> str:
+    github_token: str | None = None,
+) -> dict[str, str | int | None]:
     """Fetch the raw git diff for a GitHub Pull Request.
 
     Authenticates with PyGithub, downloads the .diff payload for the given PR,
-    and returns a truncated string safe to pass to an LLM.
+    and returns a truncated string safe to pass to an LLM, along with the actual
+    commit SHA and merge timestamp.
 
     Args:
         repo_full_name: "owner/repo" format (e.g., "GoogleCloudPlatform/microservices-demo").
@@ -53,7 +53,10 @@ def hydrate_pr_diff(
         github_token: Optional override; falls back to GITHUB_TOKEN env var.
 
     Returns:
-        Raw diff text string (possibly truncated to MAX_TOKENS).
+        Dictionary containing:
+        - diff_text: Raw diff text string (possibly truncated to MAX_TOKENS).
+        - commit_sha: The merge commit SHA of the PR.
+        - merged_at_timestamp: Unix epoch timestamp of when the PR was merged.
 
     Raises:
         ValueError: If GITHUB_TOKEN is not set and no token is provided.
@@ -86,7 +89,14 @@ def hydrate_pr_diff(
             pr_number, len(diff_text), len(truncated),
         )
 
-        return truncated
+        merged_at = pr.merged_at
+        timestamp = int(merged_at.timestamp()) if merged_at else None
+
+        return {
+            "diff_text": truncated,
+            "commit_sha": pr.merge_commit_sha,
+            "merged_at_timestamp": timestamp,
+        }
 
     except GithubException as e:
         raise RuntimeError(

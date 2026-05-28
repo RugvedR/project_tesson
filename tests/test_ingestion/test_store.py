@@ -5,9 +5,7 @@ Tests cover: append/read round-trip, multiple records, streaming,
 corrupted line skipping, and count().
 """
 
-from pathlib import Path
 
-import pytest
 
 from ingestion.schemas import TessonSimplex
 from ledger import store

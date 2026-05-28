@@ -12,12 +12,10 @@ import pytest
 from ingestion.hydrator import (
     MAX_CHARS,
     MAX_TOKENS,
-    CHARS_PER_TOKEN,
     _extract_file_headers,
-    truncate_diff,
     hydrate_pr_diff,
+    truncate_diff,
 )
-
 
 # ─── Truncation Tests (pure functions — no mocking needed) ───────────────────
 
@@ -117,9 +115,9 @@ class TestHydratePrDiff:
             pr_number=42,
             github_token="fake-token",
         )
-        assert "src/cartservice/main.go" in result
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert "src/cartservice/main.go" in result["diff_text"]
+        assert isinstance(result, dict)
+        assert len(result["diff_text"]) > 0
 
     @patch("ingestion.hydrator.Github")
     def test_multiple_files_included(self, mock_github_cls):
@@ -140,9 +138,9 @@ class TestHydratePrDiff:
         mock_github_cls.return_value = mock_gh
 
         result = hydrate_pr_diff("owner/repo", 1, github_token="fake-token")
-        assert "service_a/main.py" in result
-        assert "service_b/config.yaml" in result
-        assert "service_c/Dockerfile" in result
+        assert "service_a/main.py" in result["diff_text"]
+        assert "service_b/config.yaml" in result["diff_text"]
+        assert "service_c/Dockerfile" in result["diff_text"]
 
     def test_missing_token_raises_value_error(self, monkeypatch):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)

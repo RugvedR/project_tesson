@@ -18,10 +18,9 @@ import re
 import time
 import uuid
 from enum import Enum
-from typing import Annotated, Optional
+from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-
 
 # ─── Enums ───────────────────────────────────────────────────────────────────
 
@@ -109,6 +108,30 @@ class TessonNode(BaseModel):
         return v.strip()
 
 
+class TessonSimplexExtraction(BaseModel):
+    """The target schema for LLM extraction.
+    
+    This schema is used strictly to enforce the LLM to only output the semantic
+    components (nodes and metadata) of a simplex. Mechanical fields like timestamps
+    and commit SHAs are injected deterministically by the code pipeline.
+    """
+    nodes: list[str] = Field(
+        description=(
+            "List of infrastructure entities involved in this interaction. "
+            "Minimum 2 nodes required. IDs should be as close to the expected TERL names as possible."
+        ),
+        min_length=2,
+    )
+
+    metadata: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Flat key-value store for semantic context extracted from the PR. "
+            "Keys must be lowercase alphanumeric with underscores. Values MUST be plain strings."
+        ),
+    )
+
+
 class TessonSimplex(BaseModel):
     """A geometric interaction (edge, triangle, or higher simplex) between nodes.
 
@@ -143,13 +166,13 @@ class TessonSimplex(BaseModel):
         ge=0,
     )
 
-    pr_number: Optional[int] = Field(
+    pr_number: int | None = Field(
         default=None,
         description="GitHub PR number that generated this simplex, if applicable.",
         ge=1,
     )
 
-    commit_sha: Optional[str] = Field(
+    commit_sha: str | None = Field(
         default=None,
         description="The merge commit SHA from GitHub, if applicable.",
         max_length=64,
@@ -163,6 +186,26 @@ class TessonSimplex(BaseModel):
         ),
     )
 
+    @field_validator("simplex_id")
+    @classmethod
+    def validate_uuid4(cls, v: str) -> str:
+        try:
+            val = uuid.UUID(v, version=4)
+        except ValueError:
+            raise ValueError(f"Invalid simplex_id '{v}': must be a valid UUIDv4 string.") from None
+        return str(val)
+
+    @field_validator("timestamp")
+    @classmethod
+    def validate_timestamp(cls, v: int) -> int:
+        now = int(time.time())
+        if v > now + 300:
+            raise ValueError(
+                f"Timestamp {v} is in the future. "
+                "Tesson simplices must represent historical events."
+            )
+        return v
+
     @field_validator("nodes", mode="before")
     @classmethod
     def validate_nodes(cls, v: list) -> list:
@@ -174,11 +217,12 @@ class TessonSimplex(BaseModel):
         validated = []
         for node_id in v:
             validated.append(_validate_tesson_id(str(node_id)))
-        return validated
+        # Lexicographically sort nodes for canonical simplex representation
+        return sorted(validated)
 
     @field_validator("commit_sha")
     @classmethod
-    def validate_sha(cls, v: Optional[str]) -> Optional[str]:
+    def validate_sha(cls, v: str | None) -> str | None:
         if v is not None:
             clean = v.strip().lower()
             if not re.match(r"^[0-9a-f]{7,40}$", clean):
@@ -192,6 +236,11 @@ class TessonSimplex(BaseModel):
     @classmethod
     def validate_metadata_values(cls, v: dict) -> dict:
         for key, val in v.items():
+            if not re.match(r"^[a-z0-9_]+$", key):
+                raise ValueError(
+                    f"Invalid metadata key '{key}'. "
+                    "Keys must be lowercase alphanumeric and underscores only."
+                )
             if not isinstance(val, str):
                 raise ValueError(
                     f"metadata['{key}'] must be a plain string, got {type(val).__name__}. "
@@ -200,7 +249,7 @@ class TessonSimplex(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def no_duplicate_nodes(self) -> "TessonSimplex":
+    def no_duplicate_nodes(self) -> TessonSimplex:
         if len(self.nodes) != len(set(self.nodes)):
             seen = set()
             dupes = [n for n in self.nodes if n in seen or seen.add(n)]
