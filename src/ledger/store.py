@@ -17,8 +17,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator, Optional
 
 from ingestion.schemas import TessonSimplex
 
@@ -30,7 +30,7 @@ DEFAULT_LEDGER_PATH = Path(os.getenv("LEDGER_PATH", "./data/tesson_ledger.jsonl"
 
 # ─── Write ────────────────────────────────────────────────────────────────────
 
-def append(simplex: TessonSimplex, ledger_path: Optional[Path] = None) -> None:
+def append(simplex: TessonSimplex, ledger_path: Path | None = None) -> None:
     """Append a validated TessonSimplex to the JSONL ledger (thread-safe).
 
     Args:
@@ -77,7 +77,7 @@ def _append_posix(path: Path, line: str) -> None:
 
 # ─── Read ─────────────────────────────────────────────────────────────────────
 
-def read_all(ledger_path: Optional[Path] = None) -> list[TessonSimplex]:
+def read_all(ledger_path: Path | None = None) -> list[TessonSimplex]:
     """Read and validate all records from the ledger.
 
     Args:
@@ -90,7 +90,7 @@ def read_all(ledger_path: Optional[Path] = None) -> list[TessonSimplex]:
     return list(stream(ledger_path))
 
 
-def stream(ledger_path: Optional[Path] = None) -> Generator[TessonSimplex, None, None]:
+def stream(ledger_path: Path | None = None) -> Generator[TessonSimplex, None, None]:
     """Stream records from the ledger one at a time (memory-efficient).
 
     Yields each line as a validated TessonSimplex. Skips and logs any line
@@ -124,6 +124,6 @@ def stream(ledger_path: Optional[Path] = None) -> Generator[TessonSimplex, None,
                 )
 
 
-def count(ledger_path: Optional[Path] = None) -> int:
+def count(ledger_path: Path | None = None) -> int:
     """Return the total number of valid records in the ledger."""
     return sum(1 for _ in stream(ledger_path))

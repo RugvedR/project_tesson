@@ -11,13 +11,10 @@ Tests are grouped into:
 """
 
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
-from ingestion.terl import EntityResolutionLedger, SIMILARITY_THRESHOLD
-
+from ingestion.terl import SIMILARITY_THRESHOLD, EntityResolutionLedger
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 

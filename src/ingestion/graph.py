@@ -32,7 +32,7 @@ from typing_extensions import TypedDict
 
 from ingestion.hydrator import hydrate_pr_diff
 from ingestion.prompt import SYSTEM_PROMPT, build_user_prompt
-from ingestion.schemas import TessonSimplex
+from ingestion.schemas import TessonSimplex, TessonSimplexExtraction
 from ingestion.terl import EntityResolutionLedger
 from ledger import store
 
@@ -92,6 +92,8 @@ class PipelineState(TypedDict):
 
     # Hydration
     diff_text: Optional[str]          # Raw git diff from GitHub API
+    commit_sha: Optional[str]         # Merge commit SHA
+    merged_at_timestamp: Optional[int] # Merge timestamp
 
     # LLM extraction
     llm_raw_output: Optional[dict]    # Raw LLM response before TERL
@@ -141,9 +143,15 @@ def hydrate_node(state: PipelineState) -> PipelineState:
     pr_number = state["pr_number"]
 
     try:
-        diff_text = hydrate_pr_diff(repo_full_name=repo, pr_number=pr_number)
+        hydrated = hydrate_pr_diff(repo_full_name=repo, pr_number=pr_number)
+        diff_text = hydrated["diff_text"]
         logger.info("[hydrate] Got diff for PR #%d (%d chars)", pr_number, len(diff_text))
-        return {**state, "diff_text": diff_text}
+        return {
+            **state,
+            "diff_text": diff_text,
+            "commit_sha": hydrated["commit_sha"],
+            "merged_at_timestamp": hydrated["merged_at_timestamp"],
+        }
     except Exception as e:
         logger.error("[hydrate] Failed to hydrate PR #%d: %s", pr_number, e)
         return {**state, "pipeline_error": f"Hydration failed: {e}"}
@@ -152,9 +160,9 @@ def hydrate_node(state: PipelineState) -> PipelineState:
 # ─── Node: Extract (LLM) ─────────────────────────────────────────────────────
 
 def extract_llm_node(state: PipelineState, terl: EntityResolutionLedger, llm) -> PipelineState:
-    """Send the diff to the LLM and extract a structured TessonSimplex.
+    """Send the diff to the LLM and extract a structured TessonSimplexExtraction.
 
-    Uses `.with_structured_output(TessonSimplex)` to enforce schema at LLM
+    Uses `.with_structured_output(TessonSimplexExtraction)` to enforce schema at LLM
     response time. On failure, feeds the error back for self-correction.
     """
     if state.get("pipeline_error"):
@@ -185,7 +193,7 @@ def extract_llm_node(state: PipelineState, terl: EntityResolutionLedger, llm) ->
         user_prompt += (
             f"\n\n[CORRECTION REQUEST — Attempt {retries + 1}/{MAX_RETRIES}]\n"
             f"Your previous response failed Pydantic validation:\n{llm_error}\n"
-            f"Please fix the above errors and respond with a valid TessonSimplex."
+            f"Please fix the above errors and respond with a valid TessonSimplexExtraction."
         )
 
     messages = [
@@ -194,11 +202,11 @@ def extract_llm_node(state: PipelineState, terl: EntityResolutionLedger, llm) ->
     ]
 
     try:
-        structured_llm = llm.with_structured_output(TessonSimplex)
-        result: TessonSimplex = structured_llm.invoke(messages)
+        structured_llm = llm.with_structured_output(TessonSimplexExtraction)
+        result: TessonSimplexExtraction = structured_llm.invoke(messages)
         logger.info(
-            "[extract_llm] PR #%d → simplex %s (nodes: %s)",
-            pr_number, result.simplex_id, result.nodes,
+            "[extract_llm] PR #%d → extracted nodes: %s",
+            pr_number, result.nodes,
         )
         return {
             **state,
@@ -248,10 +256,15 @@ def resolve_terl_node(state: PipelineState, terl: EntityResolutionLedger) -> Pip
         if pr_number:
             simplex_data["pr_number"] = pr_number
 
+        if state.get("commit_sha"):
+            simplex_data["commit_sha"] = state["commit_sha"]
+        if state.get("merged_at_timestamp"):
+            simplex_data["timestamp"] = state["merged_at_timestamp"]
+
         resolved = TessonSimplex.model_validate(simplex_data)
         logger.info(
-            "[resolve_terl] PR #%d resolved nodes: %s → %s",
-            pr_number, raw_nodes, resolved_nodes,
+            "[resolve_terl] PR #%d resolved nodes: %s → %s (simplex_id: %s)",
+            pr_number, raw_nodes, resolved_nodes, resolved.simplex_id,
         )
         return {**state, "resolved_simplex": resolved}
 
@@ -367,7 +380,7 @@ def get_pipeline():
     return _pipeline
 
 
-def run_pipeline(repo: str, pr_number: int, raw_payload: dict | None = None) -> PipelineState:
+def run_pipeline(repo: str, pr_number: int, raw_payload: Optional[dict] = None) -> PipelineState:
     """Convenience function to run the pipeline for a single PR.
 
     Args:
@@ -385,6 +398,8 @@ def run_pipeline(repo: str, pr_number: int, raw_payload: dict | None = None) -> 
         "repo": repo,
         "pr_number": pr_number,
         "diff_text": None,
+        "commit_sha": None,
+        "merged_at_timestamp": None,
         "llm_raw_output": None,
         "llm_error": None,
         "retries": 0,

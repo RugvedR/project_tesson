@@ -12,7 +12,6 @@ not a reasoning engine.
 
 from __future__ import annotations
 
-
 # ─── System Prompt ────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\

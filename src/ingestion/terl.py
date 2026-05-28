@@ -23,7 +23,6 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from rapidfuzz import fuzz, process
 
@@ -207,7 +206,7 @@ class EntityResolutionLedger:
     search, avoiding RapidFuzz overhead for exact-match cases.
     """
 
-    def __init__(self, ledger_path: Optional[Path] = None) -> None:
+    def __init__(self, ledger_path: Path | None = None) -> None:
         self.ledger_path = ledger_path
         # Main store: canonical_id → {entity_type, aliases}
         self._store: dict[str, dict] = {}
@@ -247,7 +246,7 @@ class EntityResolutionLedger:
 
     # ── Core Resolution ──────────────────────────────────────────────────────
 
-    def resolve_entity(self, raw_string: str, entity_type: Optional[str] = None) -> str:
+    def resolve_entity(self, raw_string: str, entity_type: str | None = None) -> str:
         """Resolve a raw entity string to its canonical Matrix Row ID.
 
         Algorithm:
@@ -335,7 +334,7 @@ class EntityResolutionLedger:
         """Return all known canonical Matrix Row IDs."""
         return list(self._store.keys())
 
-    def get_entity_type(self, canonical_id: str) -> Optional[str]:
+    def get_entity_type(self, canonical_id: str) -> str | None:
         """Return the entity type for a canonical ID, or None if not found."""
         entry = self._store.get(canonical_id)
         return entry["entity_type"] if entry else None
