@@ -22,6 +22,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from filelock import Timeout as FileLockTimeout
 
 load_dotenv()
 
@@ -112,6 +113,13 @@ async def _process_github_event(payload: dict[str, Any]) -> None:
                 pr_number,
                 final_state.get("resolved_simplex"),
             )
+    except FileLockTimeout:
+        logger.warning(
+            "FileLock timeout processing PR #%d from %s. "
+            "Ledger or TERL is locked by another pipeline run. "
+            "GitHub will retry this webhook delivery automatically.",
+            pr_number, repo,
+        )
     except Exception as e:
         logger.exception("Unhandled exception processing PR #%d: %s", pr_number, e)
 

@@ -178,7 +178,8 @@ class TestNewEntityRegistration:
         # Third distinct PR -> Auto-promotes!
         terl.resolve_entity("future-canonical", pr_number=103)
         assert terl._store[id1]["status"] == "canonical"
-        assert len(terl._store[id1]["seen_in_prs"]) == 3
+        # Bounded memory optimization: seen_in_prs is cleared once promoted
+        assert len(terl._store[id1]["seen_in_prs"]) == 0
 
 
 # ─── Persistence Round-Trip ──────────────────────────────────────────────────
@@ -193,12 +194,13 @@ class TestPersistence:
 
     def test_reloaded_terl_resolves_persisted_entities(self, terl_with_file, tmp_path):
         terl1, ledger_file = terl_with_file
-        terl1.register_entity("persisted_svc", ["persisted-service"], "service")
+        # Use a highly distinctive name that won't fuzzy-match seed entities
+        terl1.register_entity("xylograph_tracker", ["xylograph-tracker"], "service")
 
         # Create a new TERL instance from the same file
         terl2 = EntityResolutionLedger(ledger_path=ledger_file)
-        result = terl2.resolve_entity("persisted-service")
-        assert result == "persisted_svc"
+        result = terl2.resolve_entity("xylograph-tracker")
+        assert result == "xylograph_tracker"
 
 
 # ─── Stats ───────────────────────────────────────────────────────────────────
