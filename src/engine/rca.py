@@ -97,7 +97,7 @@ class RCAEngine:
             commit_sha = self.matrix._simplex_sha_map.get(simplex_id)
 
             # Reconstruct the involved canonical entities in this simplex
-            node_indices = B_csc.getcol(idx).indices
+            node_indices = B_csc.indices[B_csc.indptr[idx]:B_csc.indptr[idx+1]]
             involved = [self.matrix._index_to_entity[n_idx] for n_idx in node_indices]
 
             results.append(
@@ -110,7 +110,10 @@ class RCAEngine:
                 )
             )
 
-        return results[:top_k]
+            if len(results) >= top_k:
+                break
+
+        return results
 
 
 def provisional_fast_path(
