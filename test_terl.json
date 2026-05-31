@@ -1,0 +1,303 @@
+{
+  "redis_cache": {
+    "entity_type": "cache",
+    "aliases": [
+      "redis",
+      "redis-cache",
+      "redis_cache",
+      "rediscache",
+      "redis-cart",
+      "redis_cart",
+      "rediscart",
+      "RedisCartCache",
+      "redis-session",
+      "redis_session",
+      "session-cache"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "memcached": {
+    "entity_type": "cache",
+    "aliases": [
+      "memcached",
+      "memcache",
+      "mem-cache",
+      "mem_cache"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "postgres_db": {
+    "entity_type": "db",
+    "aliases": [
+      "postgres",
+      "postgresql",
+      "postgres-db",
+      "postgres_db",
+      "postgresdb",
+      "auth_db",
+      "login-database",
+      "AuthenticationDB",
+      "auth-database",
+      "user_db",
+      "user-db"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "mongodb": {
+    "entity_type": "db",
+    "aliases": [
+      "mongodb",
+      "mongo",
+      "mongo-db",
+      "mongo_db",
+      "product_db",
+      "catalog-db",
+      "catalog_db"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "mysql_db": {
+    "entity_type": "db",
+    "aliases": [
+      "mysql",
+      "mysql-db",
+      "mysql_db",
+      "mysqldb"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "kafka": {
+    "entity_type": "queue",
+    "aliases": [
+      "kafka",
+      "kafka-queue",
+      "kafka_queue",
+      "kafkaqueue",
+      "event-bus",
+      "event_bus",
+      "eventbus",
+      "message-queue"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "rabbitmq": {
+    "entity_type": "queue",
+    "aliases": [
+      "rabbitmq",
+      "rabbit-mq",
+      "rabbit_mq",
+      "rabbitMQ",
+      "amqp",
+      "task-queue",
+      "task_queue"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "frontend_service": {
+    "entity_type": "service",
+    "aliases": [
+      "frontend",
+      "frontend-service",
+      "frontend_service",
+      "web-frontend",
+      "web_frontend",
+      "ui-service"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "cart_service": {
+    "entity_type": "service",
+    "aliases": [
+      "cart",
+      "cart-service",
+      "cart_service",
+      "cartservice",
+      "shopping-cart",
+      "shopping_cart"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "checkout_service": {
+    "entity_type": "service",
+    "aliases": [
+      "checkout",
+      "checkout-service",
+      "checkout_service",
+      "checkoutservice",
+      "order-service",
+      "order_service"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "payment_service": {
+    "entity_type": "service",
+    "aliases": [
+      "payment",
+      "payment-service",
+      "payment_service",
+      "paymentservice",
+      "payment-api",
+      "payment_api",
+      "billing-service",
+      "billing_service"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "product_catalog_service": {
+    "entity_type": "service",
+    "aliases": [
+      "productcatalog",
+      "product-catalog",
+      "product_catalog",
+      "productcatalogservice",
+      "catalog-service",
+      "catalog_service"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "recommendation_service": {
+    "entity_type": "service",
+    "aliases": [
+      "recommendation",
+      "recommendation-service",
+      "recommendation_service",
+      "recommendationservice",
+      "recommender"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "shipping_service": {
+    "entity_type": "service",
+    "aliases": [
+      "shipping",
+      "shipping-service",
+      "shipping_service",
+      "shippingservice"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "email_service": {
+    "entity_type": "service",
+    "aliases": [
+      "email",
+      "email-service",
+      "email_service",
+      "emailservice",
+      "notification-service",
+      "notification_service"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "currency_service": {
+    "entity_type": "service",
+    "aliases": [
+      "currency",
+      "currency-service",
+      "currency_service",
+      "currencyservice",
+      "exchange-service",
+      "exchange_service"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "ad_service": {
+    "entity_type": "service",
+    "aliases": [
+      "ad",
+      "ad-service",
+      "ad_service",
+      "adservice",
+      "ads-service",
+      "ads_service",
+      "advertisement"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "load_generator": {
+    "entity_type": "service",
+    "aliases": [
+      "loadgenerator",
+      "load-generator",
+      "load_generator",
+      "traffic-generator"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "api_gateway": {
+    "entity_type": "gateway",
+    "aliases": [
+      "api-gateway",
+      "api_gateway",
+      "apigateway",
+      "nginx",
+      "nginx-gateway",
+      "kong",
+      "envoy"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "gcs_storage": {
+    "entity_type": "storage",
+    "aliases": [
+      "gcs",
+      "google-cloud-storage",
+      "cloud-storage",
+      "s3",
+      "aws-s3",
+      "blob-storage"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "node_a": {
+    "entity_type": "service",
+    "aliases": [
+      "node_a"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "node_b": {
+    "entity_type": "service",
+    "aliases": [
+      "node_b"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "node_c": {
+    "entity_type": "service",
+    "aliases": [
+      "node_c"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  },
+  "node_d": {
+    "entity_type": "service",
+    "aliases": [
+      "node_d"
+    ],
+    "status": "canonical",
+    "seen_in_prs": []
+  }
+}

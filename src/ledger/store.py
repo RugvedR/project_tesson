@@ -27,7 +27,7 @@ from pathlib import Path
 
 from filelock import FileLock
 
-from ingestion.schemas import TessonSimplex
+from ingestion.schemas import TessonAnnotation, TessonSimplex
 from ledger.repository import LedgerRepository
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,16 @@ class FileLedgerRepository(LedgerRepository):
                 f.flush()
                 os.fsync(f.fileno())
         logger.debug("Ledger: appended simplex %s to %s", simplex.simplex_id, self._path)
+
+    def append_annotation(self, annotation: TessonAnnotation) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        line = annotation.model_dump_json() + "\n"
+        with self._lock:
+            with self._path.open("a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+        logger.debug("Ledger: appended annotation %s to %s", annotation.annotation_id, self._path)
 
     def stream_simplices(self) -> Generator[TessonSimplex, None, None]:
         if not self._path.exists():
@@ -108,6 +118,12 @@ def append(simplex: TessonSimplex, ledger_path: Path | None = None) -> None:
     """
     repo = FileLedgerRepository(ledger_path)
     repo.append_simplex(simplex)
+
+
+def append_annotation(annotation: TessonAnnotation, ledger_path: Path | None = None) -> None:
+    """Append a validated TessonAnnotation to the JSONL ledger (thread-safe)."""
+    repo = FileLedgerRepository(ledger_path)
+    repo.append_annotation(annotation)
 
 
 def read_all(ledger_path: Path | None = None) -> list[TessonSimplex]:

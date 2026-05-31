@@ -93,6 +93,34 @@ class TessonEngine:
         staging_matrix = TessonMatrix(output)
         staging_rca = RCAEngine(staging_matrix)
 
+        # Pre-flight check: Detect cycles in new simplices
+        if self._live_matrix is not None and self._live_matrix.num_simplices > 0:
+            from engine.preflight import PreflightChecker
+            from ingestion.schemas import TessonAnnotation
+            
+            checker = PreflightChecker(self._live_matrix)
+            B_csc = staging_matrix.boundary.tocsc()
+            
+            for i in range(staging_matrix.num_simplices):
+                simplex_id = staging_matrix._index_to_simplex[i]
+                if simplex_id not in self._live_matrix._simplex_pr_map:
+                    # Found a new simplex since the last compilation
+                    node_indices = B_csc.getcol(i).indices
+                    nodes = [staging_matrix._index_to_entity[idx] for idx in node_indices]
+                    
+                    result = checker.check(nodes)
+                    if result.has_cycle:
+                        logger.warning(
+                            "Pre-flight Cycle Detected for simplex %s: %s Entities: %s",
+                            simplex_id, result.message, result.cycle_entities
+                        )
+                        annotation = TessonAnnotation(
+                            annotation_type="cycle_detected",
+                            target_simplex_id=simplex_id,
+                            details={"betti_1": str(result.betti_1), "entities": ",".join(result.cycle_entities)}
+                        )
+                        store.append_annotation(annotation, ledger_path=self._ledger_path)
+
         with self._lock:
             self._live_matrix = staging_matrix
             self._live_rca = staging_rca
