@@ -6,29 +6,103 @@ ingested by the pipeline. It is the ground truth that the math engine reads.
 
 Design constraints:
   - APPEND ONLY — existing records are never modified or deleted.
-  - THREAD SAFE — multiple concurrent pipeline runs may write simultaneously.
+  - THREAD SAFE — cross-platform file locking via `filelock` guarantees
+    that concurrent pipeline runs never interleave writes.
   - VALIDATION ON READ — every record read from disk is re-validated as a
     TessonSimplex (catches any disk corruption or schema drift).
   - JSONL FORMAT — one JSON object per line (streamable, no full-parse needed).
+
+Storage Abstraction:
+  This module implements the LedgerRepository interface defined in
+  ledger.repository. The engine and API layers depend only on the abstract
+  interface, enabling a seamless Postgres migration in Phase 3.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import sys
 from collections.abc import Generator
 from pathlib import Path
 
-from ingestion.schemas import TessonSimplex
+from filelock import FileLock
+
+from ingestion.schemas import TessonAnnotation, TessonSimplex
+from ledger.repository import LedgerRepository
 
 logger = logging.getLogger(__name__)
 
 # Default ledger path (overridden by LEDGER_PATH env var)
 DEFAULT_LEDGER_PATH = Path(os.getenv("LEDGER_PATH", "./data/tesson_ledger.jsonl"))
 
+# Lock timeout in seconds. If the lock cannot be acquired within this window,
+# a filelock.Timeout is raised — the webhook layer catches this and lets
+# GitHub retry the delivery automatically.
+LOCK_TIMEOUT_SECONDS = 30
 
-# ─── Write ────────────────────────────────────────────────────────────────────
+
+# ─── File-Based Ledger Repository ─────────────────────────────────────────────
+
+class FileLedgerRepository(LedgerRepository):
+    """File-based implementation of the LedgerRepository interface.
+
+    Uses JSONL format with cross-platform file locking via `filelock`.
+    """
+
+    def __init__(self, ledger_path: Path | None = None) -> None:
+        self._path = Path(ledger_path or DEFAULT_LEDGER_PATH)
+        self._lock = FileLock(str(self._path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS)
+
+    def append_simplex(self, simplex: TessonSimplex) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        line = simplex.model_dump_json() + "\n"
+        with self._lock:
+            with self._path.open("a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+        logger.debug("Ledger: appended simplex %s to %s", simplex.simplex_id, self._path)
+
+    def append_annotation(self, annotation: TessonAnnotation) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        line = annotation.model_dump_json() + "\n"
+        with self._lock:
+            with self._path.open("a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+        logger.debug("Ledger: appended annotation %s to %s", annotation.annotation_id, self._path)
+
+    def stream_simplices(self) -> Generator[TessonSimplex, None, None]:
+        if not self._path.exists():
+            logger.info("Ledger at %s does not exist yet (no records).", self._path)
+            return
+        with self._path.open("r", encoding="utf-8") as f:
+            for line_num, raw_line in enumerate(f, start=1):
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    simplex = TessonSimplex.model_validate_json(raw_line)
+                    yield simplex
+                except Exception as e:
+                    logger.warning(
+                        "Ledger: skipping corrupted record at line %d: %s",
+                        line_num, e,
+                    )
+
+    def read_all_simplices(self) -> list[TessonSimplex]:
+        return list(self.stream_simplices())
+
+    def count_simplices(self) -> int:
+        return sum(1 for _ in self.stream_simplices())
+
+
+# ─── Module-Level Convenience Functions ───────────────────────────────────────
+# These preserve backward compatibility with the Phase 1 codebase.
+# All callsites (graph.py, proof script, tests) use these functions.
+# They delegate to a FileLedgerRepository instance internally.
+
 
 def append(simplex: TessonSimplex, ledger_path: Path | None = None) -> None:
     """Append a validated TessonSimplex to the JSONL ledger (thread-safe).
@@ -39,43 +113,18 @@ def append(simplex: TessonSimplex, ledger_path: Path | None = None) -> None:
 
     Raises:
         IOError: If the file cannot be opened for writing.
+        filelock.Timeout: If the write lock cannot be acquired within
+            LOCK_TIMEOUT_SECONDS (default 30s).
     """
-    path = Path(ledger_path or DEFAULT_LEDGER_PATH)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    line = simplex.model_dump_json() + "\n"
-
-    if sys.platform == "win32":
-        # Windows: use a simple write (no fcntl available)
-        _append_windows(path, line)
-    else:
-        _append_posix(path, line)
-
-    logger.debug("Ledger: appended simplex %s to %s", simplex.simplex_id, path)
+    repo = FileLedgerRepository(ledger_path)
+    repo.append_simplex(simplex)
 
 
-def _append_windows(path: Path, line: str) -> None:
-    """Windows-compatible file append (no advisory locking)."""
-    with path.open("a", encoding="utf-8") as f:
-        f.write(line)
-        f.flush()
-        os.fsync(f.fileno())
+def append_annotation(annotation: TessonAnnotation, ledger_path: Path | None = None) -> None:
+    """Append a validated TessonAnnotation to the JSONL ledger (thread-safe)."""
+    repo = FileLedgerRepository(ledger_path)
+    repo.append_annotation(annotation)
 
-
-def _append_posix(path: Path, line: str) -> None:
-    """POSIX append with advisory file locking (Linux/macOS)."""
-    import fcntl
-    with path.open("a", encoding="utf-8") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            f.write(line)
-            f.flush()
-            os.fsync(f.fileno())
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
-
-
-# ─── Read ─────────────────────────────────────────────────────────────────────
 
 def read_all(ledger_path: Path | None = None) -> list[TessonSimplex]:
     """Read and validate all records from the ledger.
@@ -87,7 +136,8 @@ def read_all(ledger_path: Path | None = None) -> list[TessonSimplex]:
         List of validated TessonSimplex objects. Corrupted lines are skipped
         with a logged warning (never crash on read).
     """
-    return list(stream(ledger_path))
+    repo = FileLedgerRepository(ledger_path)
+    return repo.read_all_simplices()
 
 
 def stream(ledger_path: Path | None = None) -> Generator[TessonSimplex, None, None]:
@@ -103,27 +153,11 @@ def stream(ledger_path: Path | None = None) -> Generator[TessonSimplex, None, No
     Yields:
         Validated TessonSimplex objects.
     """
-    path = Path(ledger_path or DEFAULT_LEDGER_PATH)
-
-    if not path.exists():
-        logger.info("Ledger at %s does not exist yet (no records).", path)
-        return
-
-    with path.open("r", encoding="utf-8") as f:
-        for line_num, raw_line in enumerate(f, start=1):
-            raw_line = raw_line.strip()
-            if not raw_line:
-                continue
-            try:
-                simplex = TessonSimplex.model_validate_json(raw_line)
-                yield simplex
-            except Exception as e:
-                logger.warning(
-                    "Ledger: skipping corrupted record at line %d: %s",
-                    line_num, e,
-                )
+    repo = FileLedgerRepository(ledger_path)
+    yield from repo.stream_simplices()
 
 
 def count(ledger_path: Path | None = None) -> int:
     """Return the total number of valid records in the ledger."""
-    return sum(1 for _ in stream(ledger_path))
+    repo = FileLedgerRepository(ledger_path)
+    return repo.count_simplices()

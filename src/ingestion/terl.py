@@ -25,9 +25,14 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from filelock import FileLock
 from rapidfuzz import fuzz, process
 
 logger = logging.getLogger(__name__)
+
+# Lock timeout in seconds. Matches the ledger store timeout.
+# If the lock cannot be acquired, filelock.Timeout is raised.
+LOCK_TIMEOUT_SECONDS = 30
 
 # Similarity threshold (per spec §Task 1.4). 92% = very high confidence.
 SIMILARITY_THRESHOLD = 92.0
@@ -213,6 +218,11 @@ class EntityResolutionLedger:
         self._store: dict[str, dict] = {}
         # Fast lookup: normalized_alias → canonical_id
         self._alias_map: dict[str, str] = {}
+        # Cross-platform file lock (lazy — only created if a path is set)
+        self._file_lock: FileLock | None = (
+            FileLock(str(ledger_path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS)
+            if ledger_path else None
+        )
 
         # Bootstrap with seed entities
         for canonical_id, data in SEED_ENTITIES.items():
@@ -226,11 +236,11 @@ class EntityResolutionLedger:
             self._alias_map[self._normalize(canonical_id)] = canonical_id
             for alias in data["aliases"]:
                 self._alias_map[self._normalize(alias)] = canonical_id
-        self._persist()
-
         # Load persisted ledger on top of seed (user data overrides)
         if self.ledger_path and Path(self.ledger_path).exists():
             self._load_from_disk()
+        else:
+            self._persist()
 
     # ── Normalization ────────────────────────────────────────────────────────
 
@@ -310,6 +320,36 @@ class EntityResolutionLedger:
         )
         self._register_new_entity(new_id, normalized, inferred_type, pr_number)
         return new_id
+
+    def lookup_entity(self, raw_string: str) -> str | None:
+        """Read-only resolution for incoming alerts.
+        
+        Performs exact and fuzzy matching like resolve_entity, but does NOT
+        mutate the ledger or register new entities if no match is found.
+        
+        Returns:
+            The canonical Matrix Row ID if found, otherwise None.
+        """
+        normalized = self._normalize(raw_string)
+
+        # 1. Exact match
+        if normalized in self._alias_map:
+            return self._alias_map[normalized]
+
+        # 2. Fuzzy match
+        all_aliases = list(self._alias_map.keys())
+        if all_aliases:
+            result = process.extractOne(
+                normalized,
+                all_aliases,
+                scorer=fuzz.WRatio,
+                score_cutoff=SIMILARITY_THRESHOLD,
+            )
+            if result is not None:
+                best_alias, best_score, _ = result
+                return self._alias_map[best_alias]
+
+        return None
 
     def register_entity(self, canonical_id: str, aliases: list[str], entity_type: str) -> None:
         """Force-register a new canonical entity (used for bootstrapping / admin).
@@ -416,26 +456,44 @@ class EntityResolutionLedger:
         self._persist()
 
     def _persist(self) -> None:
-        """Write the current TERL state to disk (if a path is configured)."""
+        """Write the current TERL state to disk (if a path is configured).
+
+        Acquires an exclusive file lock to prevent concurrent pipeline runs
+        from overwriting each other's changes.
+
+        Raises:
+            filelock.Timeout: If the lock cannot be acquired within
+                LOCK_TIMEOUT_SECONDS.
+        """
         if not self.ledger_path:
             return
         path = Path(self.ledger_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(self._store, f, indent=2, ensure_ascii=False)
+        with self._file_lock:
+            with path.open("w", encoding="utf-8") as f:
+                json.dump(self._store, f, indent=2, ensure_ascii=False)
 
     def _load_from_disk(self) -> None:
-        """Load persisted TERL state and merge over the seed data."""
+        """Load persisted TERL state and merge over the seed data.
+
+        Acquires an exclusive file lock to ensure a consistent read
+        (no partial writes from concurrent pipeline runs).
+
+        Raises:
+            filelock.Timeout: If the lock cannot be acquired within
+                LOCK_TIMEOUT_SECONDS.
+        """
         path = Path(self.ledger_path)
-        with path.open("r", encoding="utf-8") as f:
-            persisted: dict = json.load(f)
+        with self._file_lock:
+            with path.open("r", encoding="utf-8") as f:
+                persisted: dict = json.load(f)
         for canonical_id, data in persisted.items():
             # Ensure backwards compatibility
             if "status" not in data:
                 data["status"] = "canonical"
             if "seen_in_prs" not in data:
                 data["seen_in_prs"] = []
-                
+
             self._store[canonical_id] = data
             self._alias_map[self._normalize(canonical_id)] = canonical_id
             for alias in data.get("aliases", []):

@@ -258,3 +258,15 @@ class TessonSimplex(BaseModel):
                 "Each node may appear only once per simplex."
             )
         return self
+
+class TessonAnnotation(BaseModel):
+    """An append-only annotation event for the ledger.
+
+    Used to flag structural anomalies (e.g., cycles) without
+    modifying historical simplex entries.
+    """
+    annotation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    annotation_type: str
+    target_simplex_id: str
+    timestamp: int = Field(default_factory=lambda: int(time.time()))
+    details: dict[str, str] = Field(default_factory=dict)
