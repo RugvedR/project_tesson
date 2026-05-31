@@ -321,6 +321,36 @@ class EntityResolutionLedger:
         self._register_new_entity(new_id, normalized, inferred_type, pr_number)
         return new_id
 
+    def lookup_entity(self, raw_string: str) -> str | None:
+        """Read-only resolution for incoming alerts.
+        
+        Performs exact and fuzzy matching like resolve_entity, but does NOT
+        mutate the ledger or register new entities if no match is found.
+        
+        Returns:
+            The canonical Matrix Row ID if found, otherwise None.
+        """
+        normalized = self._normalize(raw_string)
+
+        # 1. Exact match
+        if normalized in self._alias_map:
+            return self._alias_map[normalized]
+
+        # 2. Fuzzy match
+        all_aliases = list(self._alias_map.keys())
+        if all_aliases:
+            result = process.extractOne(
+                normalized,
+                all_aliases,
+                scorer=fuzz.WRatio,
+                score_cutoff=SIMILARITY_THRESHOLD,
+            )
+            if result is not None:
+                best_alias, best_score, _ = result
+                return self._alias_map[best_alias]
+
+        return None
+
     def register_entity(self, canonical_id: str, aliases: list[str], entity_type: str) -> None:
         """Force-register a new canonical entity (used for bootstrapping / admin).
 
